@@ -1,4 +1,35 @@
-# LTX-2
+# LTX-Bending README
+
+## Steps
+
+1. Implement network bending during the denoising process
+
+Questions: How does LTX-2 work? Does it generate one frame at a time? How many denoising steps are there? 
+
+2. Test many different transformations
+
+Use the transformations we used for the original paper, then brainstorm some new ones.
+
+3. Apply parameters to the transformations that change over time (sine input, custom drawn input/keyframe, etc.)
+
+4. Take the transformations that are most interesting and use them with audio descriptors as input
+
+## Todo
+
+- Read the LTX-2 paper
+
+## Ideas
+
+- Create a video using audio-to-video that uses my music as input
+- Create a custom ComfyUI Node for applying network bending
+
+
+
+
+
+
+
+# LTX-2 README
 
 [![Website](https://img.shields.io/badge/Website-LTX-181717?logo=google-chrome)](https://ltx.io)
 [![Model](https://img.shields.io/badge/HuggingFace-Model-orange?logo=huggingface)](https://huggingface.co/Lightricks/LTX-2.3)
