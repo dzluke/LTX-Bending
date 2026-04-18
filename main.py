@@ -1,6 +1,11 @@
 from __future__ import annotations
 
 import os
+from dataclasses import replace
+
+from ltx_core.types import LatentState
+from ltx_pipelines.utils.bending import make_network_bending_loop
+from ltx_pipelines.utils.samplers import euler_denoising_loop
 
 os.environ.setdefault("PYTORCH_ALLOC_CONF", "expandable_segments:True")
 os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
@@ -106,6 +111,16 @@ def main() -> None:
 	cfg = load_config()
 	validate_config(cfg)
 
+	denoising_loop = euler_denoising_loop
+
+	def bending(video_state: LatentState, step_idx: int) -> LatentState:
+		if step_idx == 4:
+			print("Applying bending at step 4!")
+			return replace(video_state, latent=video_state.latent * 2.0)
+		return video_state
+
+	denoising_loop2 = make_network_bending_loop(bending)
+
 	pipeline = DistilledPipeline(
 		distilled_checkpoint_path=cfg.distilled_checkpoint_path,
 		gemma_root=cfg.gemma_root,
@@ -113,6 +128,7 @@ def main() -> None:
 		loras=cfg.loras,
 		quantization=cfg.quantization_policy(),
 		torch_compile=cfg.torch_compile,
+		denoising_loop=denoising_loop2,
 	)
 
 	video_chunks, audio = pipeline(

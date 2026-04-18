@@ -54,9 +54,11 @@ class DistilledPipeline:
         quantization: QuantizationPolicy | None = None,
         registry: Registry | None = None,
         torch_compile: bool = False,
+        denoising_loop = None,
     ):
         self.device = device or get_device()
         self.dtype = torch.bfloat16
+        self.denoising_loop = denoising_loop
 
         self.prompt_encoder = PromptEncoder(
             distilled_checkpoint_path, gemma_root, self.dtype, self.device, registry=registry
@@ -131,6 +133,7 @@ class DistilledPipeline:
             video=ModalitySpec(context=video_context, conditionings=stage_1_conditionings),
             audio=ModalitySpec(context=audio_context),
             streaming_prefetch_count=streaming_prefetch_count,
+            loop=self.denoising_loop,
         )
 
         # Stage 2: Upsample and refine the video at higher resolution with distilled LORA.
