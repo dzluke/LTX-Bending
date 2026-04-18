@@ -281,21 +281,48 @@ def _build_audio_bending(spec: AudioBendSpec, per_frame_param_values: torch.Tens
 
 def _ensure_stereo_audio(audio):
     waveform = audio.waveform
-    if waveform.ndim == 1:
-        waveform = waveform.unsqueeze(0).unsqueeze(0)
-    elif waveform.ndim == 2:
+    if waveform.ndim == 3:
+        # decode_audio_from_file commonly returns (1, channels, samples)
+        if waveform.shape[0] != 1:
+            raise ValueError(f"Unsupported batched audio shape: {tuple(waveform.shape)}")
+        waveform = waveform.squeeze(0)
+    elif waveform.ndim == 1:
         waveform = waveform.unsqueeze(0)
-    elif waveform.ndim != 3:
+    elif waveform.ndim != 2:
         raise ValueError(f"Unsupported audio waveform shape: {tuple(waveform.shape)}")
 
-    if waveform.shape[1] == 1:
-        waveform = waveform.repeat(1, 2, 1)
-    elif waveform.shape[1] > 2:
-        waveform = waveform[:, :2, :]
+    # Convert to channel-first [channels, samples] before stereo normalization.
+    if waveform.shape[0] not in (1, 2) and waveform.shape[1] in (1, 2):
+        waveform = waveform.T
 
-    if waveform.shape[1] != 2:
+    if waveform.shape[0] == 1:
+        waveform = waveform.repeat(2, 1)
+    elif waveform.shape[0] > 2:
+        waveform = waveform[:2, :]
+
+    # _write_audio expects either [samples, 2] or [2, samples], but [samples, 2]
+    # avoids ambiguous reshaping and packs correctly for interleaved stereo.
+    waveform = waveform.T.contiguous()
+
+    if waveform.ndim != 2 or waveform.shape[1] != 2:
         raise ValueError(f"Failed to normalize to stereo, got shape: {tuple(waveform.shape)}")
     return replace(audio, waveform=waveform)
+
+
+def _waveform_to_channels_samples(waveform: torch.Tensor) -> torch.Tensor:
+    if waveform.ndim == 3:
+        if waveform.shape[0] != 1:
+            raise ValueError(f"Unsupported batched waveform shape: {tuple(waveform.shape)}")
+        waveform = waveform.squeeze(0)
+    elif waveform.ndim == 1:
+        waveform = waveform.unsqueeze(0)
+    elif waveform.ndim != 2:
+        raise ValueError(f"Unsupported waveform shape: {tuple(waveform.shape)}")
+
+    # If it's [samples, channels], transpose to [channels, samples].
+    if waveform.shape[0] not in (1, 2) and waveform.shape[1] in (1, 2):
+        waveform = waveform.T
+    return waveform
 
 
 @torch.inference_mode()
@@ -351,7 +378,7 @@ def main() -> None:
         f"fps={float(cfg.frame_rate):.3f}"
     )
 
-    waveform = source_audio.waveform[0]
+    waveform = _waveform_to_channels_samples(source_audio.waveform)
     rms_per_frame = _compute_rms_per_frame(
         audio_waveform=waveform,
         sample_rate=int(source_audio.sampling_rate),
