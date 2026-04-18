@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import math
+import shutil
+import subprocess
 from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
@@ -325,6 +327,40 @@ def _waveform_to_channels_samples(waveform: torch.Tensor) -> torch.Tensor:
     return waveform
 
 
+def _mux_audio_with_ffmpeg(video_path: Path, audio_path: Path, output_path: Path, duration_seconds: float) -> None:
+    if shutil.which("ffmpeg") is None:
+        raise RuntimeError("ffmpeg is not installed or not available in PATH")
+
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-i",
+        str(video_path),
+        "-t",
+        f"{duration_seconds:.6f}",
+        "-i",
+        str(audio_path),
+        "-c:v",
+        "copy",
+        "-c:a",
+        "aac",
+        "-map",
+        "0:v:0",
+        "-map",
+        "1:a:0",
+        "-shortest",
+        str(output_path),
+    ]
+
+    try:
+        subprocess.run(cmd, check=True, capture_output=True, text=True)
+    except subprocess.CalledProcessError as exc:
+        stderr = (exc.stderr or "").strip()
+        stdout = (exc.stdout or "").strip()
+        details = stderr if stderr else stdout
+        raise RuntimeError(f"ffmpeg mux failed (exit {exc.returncode}): {details}") from exc
+
+
 @torch.inference_mode()
 def main() -> None:
     audio_cfg = AUDIO2VIDEO_CONFIG
@@ -409,6 +445,7 @@ def main() -> None:
         run_name = f"{run_idx:03d}_{_safe_run_name(spec['name'])}"
         run_dir = batch_run_dir / run_name
         video_path = run_dir / "video.mp4"
+        silent_video_path = run_dir / "video_no_audio.mp4"
 
         if run_dir.exists() and not audio_cfg.overwrite_existing:
             print(f"[{run_idx}/{len(EXPERIMENTS)}] Skipping existing run: {run_name}")
@@ -451,9 +488,16 @@ def main() -> None:
         encode_video(
             video=video_tensor,
             fps=int(cfg.frame_rate),
-            audio=source_audio,
-            output_path=str(video_path),
+            audio=None,
+            output_path=str(silent_video_path),
             video_chunks_number=1,
+        )
+
+        _mux_audio_with_ffmpeg(
+            video_path=silent_video_path,
+            audio_path=audio_path,
+            output_path=video_path,
+            duration_seconds=target_duration_seconds,
         )
 
         run_info = {

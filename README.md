@@ -12,6 +12,38 @@ Use the transformations we used for the original paper, then brainstorm some new
 
 3. Apply parameters to the transformations that change over time (sine input, custom drawn input/keyframe, etc.)
 
+### Time-Varying Bend Parameters (Implemented)
+
+`batch.py` now supports parameter values that change over normalized video time `t` in `[0, 1]`.
+
+- `param_schedule`: keypoints `(t, value)` with linear interpolation.
+- `param_segments`: piecewise constants `(t_start, t_end, value)`.
+- Existing static `params` still work and are used as fallback when no schedule is given.
+
+Example ramp (`value` goes from 0 to 5 across the whole video):
+
+```python
+{
+  "name": "add_ramp_0_to_5_step7",
+  "function": "add_scalar",
+  "params": {"value": 0.0},
+  "steps": [7],
+  "param_schedule": {"value": [(0.0, 0.0), (1.0, 5.0)]},
+}
+```
+
+Example segmented behavior (first half low factor, second half high factor):
+
+```python
+{
+  "name": "mul_segments_step7",
+  "function": "multiply_scalar",
+  "params": {"factor": 1.0},
+  "steps": [7],
+  "param_segments": {"factor": [(0.0, 0.5, 1.0), (0.5, 1.0, 5.0)]},
+}
+```
+
 4. Take the transformations that are most interesting and use them with audio descriptors as input
 
 ## Todo
