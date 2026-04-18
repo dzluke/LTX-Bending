@@ -1,0 +1,27 @@
+# Copy this file to config.yaml and adjust paths/values for your setup.
+
+# Required model paths
+distilled_checkpoint_path: /path/to/ltx-2.3-22b-distilled-1.1.safetensors
+spatial_upsampler_path: /path/to/ltx-2.3-spatial-upscaler-x2-1.1.safetensors
+gemma_root: /path/to/gemma
+
+# Prompt / generation settings
+prompt: A cinematic portrait of a fox in a misty forest at sunrise
+seed: 42
+width: 768
+height: 512
+
+# Set num_frames > 1 for actual motion video.
+num_frames: 49
+frame_rate: 24.0
+
+# Output
+output_frames_dir: outputs/frames
+output_video_path: outputs/generated.mp4
+
+# Optional extras
+enhance_prompt: false
+torch_compile: false
+loras: []
+# One of: fp8_cast, fp8_scaled_mm, null
+quantization: fp8_cast

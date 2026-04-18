@@ -27,6 +27,8 @@ dev = [
     "pre-commit>=4.3.0",
     "ruff>=0.14.3",
     "pytest~=9.0",
+    "pydantic>=2.12.5",
+    "pyyaml>=6.0.3",
 ]
 
 [tool.ruff]

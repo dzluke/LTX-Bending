@@ -1,41 +1,64 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+import os
+
+os.environ.setdefault("PYTORCH_ALLOC_CONF", "expandable_segments:True")
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+
 from pathlib import Path
+from typing import Literal
 
 import torch
+import yaml
 from PIL import Image
+from pydantic import BaseModel
 
 from ltx_pipelines import DistilledPipeline
 from ltx_pipelines.utils.media_io import encode_video
+from ltx_core.quantization import QuantizationPolicy  # noqa: E402  (must follow ltx_pipelines to avoid circular import)
+
+CONFIG_PATH = Path(__file__).parent / "config.yaml"
+
+QuantizationName = Literal["fp8_cast", "fp8_scaled_mm"]
 
 
-@dataclass
-class Config:
-	# Required model paths
-	distilled_checkpoint_path: str = "/absolute/path/to/ltx2_distilled.safetensors"
-	spatial_upsampler_path: str = "/absolute/path/to/spatial_upsampler.safetensors"
-	gemma_root: str = "/absolute/path/to/gemma"
+class Config(BaseModel):
+	model_config = {"extra": "forbid"}
 
-	# Prompt / generation settings
+	distilled_checkpoint_path: str
+	spatial_upsampler_path: str
+	gemma_root: str
+
 	prompt: str = "A cinematic portrait of a fox in a misty forest at sunrise"
 	seed: int = 42
 	width: int = 768
 	height: int = 512
 
-	# Set num_frames > 1 for actual motion video.
 	num_frames: int = 49
 	frame_rate: float = 24.0
 
-	# Output
 	output_frames_dir: str = "outputs/frames"
 	output_video_path: str = "outputs/generated.mp4"
 
-	# Optional extras
 	enhance_prompt: bool = False
 	torch_compile: bool = False
-	loras: list = field(default_factory=list)
-	quantization: object | None = None
+	loras: list = []
+	quantization: QuantizationName | None = "fp8_cast"
+
+	def quantization_policy(self) -> QuantizationPolicy | None:
+		if self.quantization is None:
+			return None
+		return getattr(QuantizationPolicy, self.quantization)()
+
+
+def load_config(path: Path = CONFIG_PATH) -> Config:
+	if not path.exists():
+		raise FileNotFoundError(
+			f"Config file not found at {path}. Copy config.example.yaml to config.yaml and edit it.",
+		)
+	with open(path) as f:
+		data = yaml.safe_load(f) or {}
+	return Config(**data)
 
 
 def validate_config(cfg: Config) -> None:
@@ -48,7 +71,7 @@ def validate_config(cfg: Config) -> None:
 	if missing:
 		joined = ", ".join(missing)
 		raise FileNotFoundError(
-			f"Missing required path(s): {joined}. Update Config at the top of main.py."
+			f"Missing required path(s): {joined}. Update {CONFIG_PATH.name}.",
 		)
 
 
@@ -78,8 +101,9 @@ def save_frames_and_collect(video_chunks, frames_dir: str) -> torch.Tensor:
 	return video_tensor
 
 
+@torch.inference_mode()
 def main() -> None:
-	cfg = Config()
+	cfg = load_config()
 	validate_config(cfg)
 
 	pipeline = DistilledPipeline(
@@ -87,7 +111,7 @@ def main() -> None:
 		gemma_root=cfg.gemma_root,
 		spatial_upsampler_path=cfg.spatial_upsampler_path,
 		loras=cfg.loras,
-		quantization=cfg.quantization,
+		quantization=cfg.quantization_policy(),
 		torch_compile=cfg.torch_compile,
 	)
 
@@ -101,7 +125,7 @@ def main() -> None:
 		images=[],
 		tiling_config=None,
 		enhance_prompt=cfg.enhance_prompt,
-		streaming_prefetch_count=None,
+		streaming_prefetch_count=1,
 	)
 
 	video_tensor = save_frames_and_collect(video_chunks, cfg.output_frames_dir)
