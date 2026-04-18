@@ -10,6 +10,8 @@ BendFunctionName = Literal[
     "invert",
     "reflect",
     "rotate",
+    "add_gaussian_noise",
+    "add_random_vector",
 ]
 
 

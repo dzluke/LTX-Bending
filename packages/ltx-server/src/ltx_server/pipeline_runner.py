@@ -11,7 +11,15 @@ from typing import Any
 import torch
 from fastapi.concurrency import run_in_threadpool
 
-from bending_functions import add_scalar, invert, multiply_scalar, reflect, rotate
+from bending_functions import (
+    add_gaussian_noise,
+    add_random_vector,
+    add_scalar,
+    invert,
+    multiply_scalar,
+    reflect,
+    rotate,
+)
 from ltx_core.text_encoders.gemma.embeddings_processor import EmbeddingsProcessorOutput
 from ltx_core.types import LatentState
 from ltx_pipelines import DistilledPipeline
@@ -163,6 +171,15 @@ def apply_bend(
         return reflect(latent, dim=int(params.get("dim", -1)))
     if fn_name == "rotate":
         return rotate(latent, k=int(params.get("k", 1)))
+    if fn_name == "add_gaussian_noise":
+        return add_gaussian_noise(latent, std=float(params.get("std", 1.0)))
+    if fn_name == "add_random_vector":
+        return add_random_vector(
+            latent,
+            seed=int(params.get("seed", 0)),
+            std=float(params.get("std", 1.0)),
+            normalize=bool(params.get("normalize", False)),
+        )
     raise ValueError(f"Unsupported bend function: {fn_name}")
 
 

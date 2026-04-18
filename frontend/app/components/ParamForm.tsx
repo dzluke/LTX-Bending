@@ -1,7 +1,21 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { BendFunctionName, BendSpec, GenerateRequest } from "../lib/api";
+
+const STORAGE_KEY = "ltx-bending.paramForm.v1";
+
+interface PersistedForm {
+  prompt: string;
+  seed: number;
+  width: number;
+  height: number;
+  numFrames: number;
+  frameRate: number;
+  enhancePrompt: boolean;
+  streamingPrefetch: number;
+  specs: BendSpec[];
+}
 
 interface Props {
   running: boolean;
@@ -15,13 +29,17 @@ const FUNCTIONS: BendFunctionName[] = [
   "invert",
   "reflect",
   "rotate",
+  "add_gaussian_noise",
+  "add_random_vector",
 ];
 
-function defaultParams(fn: BendFunctionName): Record<string, number> {
+function defaultParams(fn: BendFunctionName): Record<string, number | boolean> {
   if (fn === "add_scalar") return { value: 1.0 };
   if (fn === "multiply_scalar") return { factor: 2.0 };
   if (fn === "reflect") return { dim: -1 };
   if (fn === "rotate") return { k: 1 };
+  if (fn === "add_gaussian_noise") return { std: 0.1 };
+  if (fn === "add_random_vector") return { seed: 0, std: 0.1, normalize: false };
   return {};
 }
 
@@ -30,6 +48,8 @@ const PARAM_STEPS: Partial<Record<BendFunctionName, Record<string, number>>> = {
   multiply_scalar: { factor: 0.1 },
   reflect: { dim: 1 },
   rotate: { k: 1 },
+  add_gaussian_noise: { std: 0.01 },
+  add_random_vector: { seed: 1, std: 0.01 },
 };
 
 function paramStep(fn: BendFunctionName, key: string): number {
@@ -46,6 +66,40 @@ export function ParamForm({ running, onSubmit, error }: Props) {
   const [enhancePrompt, setEnhancePrompt] = useState(false);
   const [streamingPrefetch, setStreamingPrefetch] = useState<number>(1);
   const [specs, setSpecs] = useState<BendSpec[]>([]);
+  const [hydrated, setHydrated] = useState(false);
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (raw) {
+        const p = JSON.parse(raw) as Partial<PersistedForm>;
+        if (typeof p.prompt === "string") setPrompt(p.prompt);
+        if (typeof p.seed === "number") setSeed(p.seed);
+        if (typeof p.width === "number") setWidth(p.width);
+        if (typeof p.height === "number") setHeight(p.height);
+        if (typeof p.numFrames === "number") setNumFrames(p.numFrames);
+        if (typeof p.frameRate === "number") setFrameRate(p.frameRate);
+        if (typeof p.enhancePrompt === "boolean") setEnhancePrompt(p.enhancePrompt);
+        if (typeof p.streamingPrefetch === "number") setStreamingPrefetch(p.streamingPrefetch);
+        if (Array.isArray(p.specs)) setSpecs(p.specs);
+      }
+    } catch (e) {
+      console.warn("Failed to load persisted form", e);
+    }
+    setHydrated(true);
+  }, []);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    const data: PersistedForm = {
+      prompt, seed, width, height, numFrames, frameRate, enhancePrompt, streamingPrefetch, specs,
+    };
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+    } catch (e) {
+      console.warn("Failed to persist form", e);
+    }
+  }, [hydrated, prompt, seed, width, height, numFrames, frameRate, enhancePrompt, streamingPrefetch, specs]);
 
   function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -182,7 +236,7 @@ function SpecRow({
   function setFunction(fn: BendFunctionName) {
     onChange({ ...spec, function: fn, params: defaultParams(fn) });
   }
-  function setParam(key: string, value: number) {
+  function setParam(key: string, value: number | boolean) {
     onChange({ ...spec, params: { ...spec.params, [key]: value } });
   }
   function setSteps(csv: string) {
@@ -229,7 +283,7 @@ function ParamInputs({
   onParam,
 }: {
   spec: BendSpec;
-  onParam: (key: string, value: number) => void;
+  onParam: (key: string, value: number | boolean) => void;
 }) {
   const keys = Object.keys(spec.params);
   if (keys.length === 0) {
@@ -237,18 +291,33 @@ function ParamInputs({
   }
   return (
     <div className="flex gap-2 flex-wrap">
-      {keys.map((key) => (
-        <label key={key} className="text-xs flex items-center gap-1 flex-1 min-w-0">
-          {key}
-          <input
-            type="number"
-            step={paramStep(spec.function, key)}
-            className="input"
-            value={Number(spec.params[key] ?? 0)}
-            onChange={(e) => onParam(key, Number(e.target.value))}
-          />
-        </label>
-      ))}
+      {keys.map((key) => {
+        const value = spec.params[key];
+        if (typeof value === "boolean") {
+          return (
+            <label key={key} className="text-xs flex items-center gap-1 flex-1 min-w-0">
+              <input
+                type="checkbox"
+                checked={value}
+                onChange={(e) => onParam(key, e.target.checked)}
+              />
+              {key}
+            </label>
+          );
+        }
+        return (
+          <label key={key} className="text-xs flex items-center gap-1 flex-1 min-w-0">
+            {key}
+            <input
+              type="number"
+              step={paramStep(spec.function, key)}
+              className="input"
+              value={Number(value ?? 0)}
+              onChange={(e) => onParam(key, Number(e.target.value))}
+            />
+          </label>
+        );
+      })}
     </div>
   );
 }
