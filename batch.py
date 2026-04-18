@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
@@ -35,11 +36,17 @@ BendFunctionName = Literal[
 ]
 
 
-class BendSpec(TypedDict):
+class BendSpec(TypedDict, total=False):
     name: str
     function: BendFunctionName
     params: dict[str, float | int | bool]
     steps: list[int]
+    # Per-parameter keypoints over normalized video progress t in [0, 1].
+    # Example: {"value": [(0.0, 0.0), (1.0, 5.0)]}
+    param_schedule: dict[str, list[tuple[float, float]]]
+    # Per-parameter piecewise constant segments over t in [0, 1].
+    # Example: {"factor": [(0.0, 0.5, 1.0), (0.5, 1.0, 5.0)]}
+    param_segments: dict[str, list[tuple[float, float, float]]]
 
 
 OUTPUT_ROOT = Path("outputs/batch")
@@ -48,28 +55,137 @@ SAVE_VIDEOS_ONLY = True
 
 # Configure your batch sweep here in Python code.
 EXPERIMENTS: list[BendSpec] = [
-    # {"name": "add_2_step4", "function": "add_scalar", "params": {"value": 2.0}, "steps": [4]},
-    # {"name": "add_2_steps4_8", "function": "add_scalar", "params": {"value": 2.0}, "steps": [4, 8]},
-    # {"name": "mul_5_step2", "function": "multiply_scalar", "params": {"factor": 5.0}, "steps": [2]},
-    # {"name": "mul_5_step7", "function": "multiply_scalar", "params": {"factor": 5.0}, "steps": [7]},
-    # {"name": "exp_step6", "function": "exponential", "params": {}, "steps": [6]},
-    # {"name": "log_bias3_step6", "function": "logarithm", "params": {"eps": 1e-6}, "steps": [6]},
-    # # {"name": "pow_1_5_step7", "function": "power", "params": {"exponent": 1.5}, "steps": [7]},
-    # {"name": "invert_step6", "function": "invert", "params": {}, "steps": [6]},
-    # {"name": "reflect_w_step7", "function": "reflect", "params": {"dim": -1}, "steps": [7]},
-    # {"name": "rotate90_step8", "function": "rotate", "params": {"k": 1}, "steps": [8]},
-    {"name": "add_-2_step4", "function": "add_scalar", "params": {"value": -2.0}, "steps": [4]},
-    {"name": "add_2_steps1", "function": "add_scalar", "params": {"value": 2.0}, "steps": [1]},
-    {"name": "mul_10_step2", "function": "multiply_scalar", "params": {"factor": 10.0}, "steps": [2]},
-    {"name": "mul_10_step7", "function": "multiply_scalar", "params": {"factor": 10.0}, "steps": [7]},
-    {"name": "mul_0p5_step7", "function": "multiply_scalar", "params": {"factor": 0.5}, "steps": [7]},
-    {"name": "mul_0p5_step7", "function": "multiply_scalar", "params": {"factor": 0.5}, "steps": [11]},
-    {"name": "exp_step2", "function": "exponential", "params": {}, "steps": [2]},
-    {"name": "log_bias3_step2", "function": "logarithm", "params": {"eps": 1e-6}, "steps": [2]},
-    {"name": "invert_step2", "function": "invert", "params": {}, "steps": [2]},
-    {"name": "reflect_w_step2", "function": "reflect", "params": {"dim": -1}, "steps": [2]},
-    # {"name": "rotate90_step8", "function": "rotate", "params": {"k": 1}, "steps": [8]},
+    # {"name": "add_-2_step4", "function": "add_scalar", "params": {"value": -2.0}, "steps": [4]},
+    # {"name": "add_2_steps1", "function": "add_scalar", "params": {"value": 2.0}, "steps": [1]},
+    # {"name": "mul_10_step2", "function": "multiply_scalar", "params": {"factor": 10.0}, "steps": [2]},
+    # {"name": "mul_10_step7", "function": "multiply_scalar", "params": {"factor": 10.0}, "steps": [7]},
+    # {"name": "mul_0p5_step7", "function": "multiply_scalar", "params": {"factor": 0.5}, "steps": [7]},
+    # {"name": "mul_0p5_step11", "function": "multiply_scalar", "params": {"factor": 0.5}, "steps": [11]},
+    # {"name": "exp_step2", "function": "exponential", "params": {}, "steps": [2]},
+    # {"name": "log_bias3_step2", "function": "logarithm", "params": {"eps": 1e-6}, "steps": [2]},
+    # {"name": "invert_step2", "function": "invert", "params": {}, "steps": [2]},
+    # {"name": "reflect_w_step2", "function": "reflect", "params": {"dim": -1}, "steps": [2]},
+    {
+        "name": "add_ramp_0_to_5_step7",
+        "function": "add_scalar",
+        "params": {"value": 0.0},
+        "steps": [7],
+        "param_schedule": {"value": [(0.0, 0.0), (1.0, 5.0)]},
+    },
+    {
+        "name": "add_ramp_0_to_5_step2",
+        "function": "add_scalar",
+        "params": {"value": 0.0},
+        "steps": [2],
+        "param_schedule": {"value": [(0.0, 0.0), (1.0, 5.0)]},
+    },
+    # {
+    #     "name": "mul_segments_step7",
+    #     "function": "multiply_scalar",
+    #     "params": {"factor": 1.0},
+    #     "steps": [7],
+    #     "param_segments": {"factor": [(0.0, 0.5, 1.0), (0.5, 1.0, 5.0)]},
+    # },
 ]
+
+
+def _clamp01(value: float) -> float:
+    return max(0.0, min(1.0, value))
+
+
+def _normalize_time_progress(video_state: LatentState) -> torch.Tensor:
+    if video_state.positions is None:
+        raise ValueError("video_state.positions is required for param scheduling")
+
+    time_axis = video_state.positions[0, 0, :, 0, 0].to(video_state.latent.device, dtype=torch.float32)
+    t_min = torch.min(time_axis)
+    t_max = torch.max(time_axis)
+    if torch.isclose(t_min, t_max):
+        return torch.zeros_like(time_axis)
+    return (time_axis - t_min) / (t_max - t_min)
+
+
+def _parameter_vector_from_keypoints(
+    t: torch.Tensor,
+    keypoints: list[tuple[float, float]],
+) -> torch.Tensor:
+    if len(keypoints) == 0:
+        raise ValueError("param_schedule keypoints cannot be empty")
+
+    sorted_points = sorted((float(tp), float(v)) for tp, v in keypoints)
+    if any((not math.isfinite(tp) or not math.isfinite(v)) for tp, v in sorted_points):
+        raise ValueError("param_schedule contains non-finite values")
+
+    if len(sorted_points) == 1:
+        return torch.full_like(t, sorted_points[0][1])
+
+    x = torch.tensor([tp for tp, _ in sorted_points], dtype=torch.float32, device=t.device)
+    y = torch.tensor([v for _, v in sorted_points], dtype=torch.float32, device=t.device)
+
+    idx = torch.searchsorted(x, t, right=True)
+    idx = idx.clamp(min=1, max=len(sorted_points) - 1)
+
+    x0 = x[idx - 1]
+    x1 = x[idx]
+    y0 = y[idx - 1]
+    y1 = y[idx]
+
+    denom = (x1 - x0).clamp_min(1e-8)
+    alpha = ((t - x0) / denom).clamp(0.0, 1.0)
+    out = y0 + alpha * (y1 - y0)
+
+    out = torch.where(t <= x[0], y[0], out)
+    out = torch.where(t >= x[-1], y[-1], out)
+    return out
+
+
+def _parameter_vector_from_segments(
+    t: torch.Tensor,
+    segments: list[tuple[float, float, float]],
+    default_value: float,
+) -> torch.Tensor:
+    if len(segments) == 0:
+        raise ValueError("param_segments cannot be empty")
+
+    out = torch.full_like(t, float(default_value))
+    for start_t, end_t, value in segments:
+        if not math.isfinite(float(value)):
+            raise ValueError("param_segments contains non-finite values")
+        start = _clamp01(float(start_t))
+        end = _clamp01(float(end_t))
+        if end <= start:
+            continue
+
+        mask = (t >= start) & (t < end)
+        if math.isclose(end, 1.0, abs_tol=1e-6):
+            mask = mask | (t == 1.0)
+        out = torch.where(mask, torch.tensor(float(value), device=t.device), out)
+    return out
+
+
+def _resolve_parameter(
+    video_state: LatentState,
+    spec: BendSpec,
+    param_name: str,
+    default_value: float,
+) -> float | torch.Tensor:
+    schedule = spec.get("param_schedule")
+    segments = spec.get("param_segments")
+
+    has_schedule = bool(schedule and param_name in schedule)
+    has_segments = bool(segments and param_name in segments)
+
+    if has_schedule and has_segments:
+        raise ValueError(
+            f"Bend '{spec['name']}' param '{param_name}' defines both param_schedule and param_segments",
+        )
+    if not has_schedule and not has_segments:
+        return default_value
+
+    t = _normalize_time_progress(video_state)
+    if has_schedule:
+        return _parameter_vector_from_keypoints(t, schedule[param_name])
+    return _parameter_vector_from_segments(t, segments[param_name], default_value)
 
 
 def apply_bend(latent: torch.Tensor, fn_name: BendFunctionName, params: dict[str, float | int | bool]) -> torch.Tensor:
@@ -98,16 +214,46 @@ def apply_bend(latent: torch.Tensor, fn_name: BendFunctionName, params: dict[str
     raise ValueError(f"Unsupported bend function: {fn_name}")
 
 
+def apply_bend_scheduled(
+    latent: torch.Tensor,
+    fn_name: BendFunctionName,
+    params: dict[str, float | int | bool | torch.Tensor],
+) -> torch.Tensor:
+    if fn_name == "add_scalar":
+        value = params.get("value", 0.0)
+        if isinstance(value, torch.Tensor):
+            return latent + value.view(1, 1, -1, 1, 1).to(device=latent.device, dtype=latent.dtype)
+        return add_scalar(latent, value=float(value))
+    if fn_name == "multiply_scalar":
+        factor = params.get("factor", 1.0)
+        if isinstance(factor, torch.Tensor):
+            return latent * factor.view(1, 1, -1, 1, 1).to(device=latent.device, dtype=latent.dtype)
+        return multiply_scalar(latent, factor=float(factor))
+
+    fallback_params: dict[str, float | int | bool] = {}
+    for key, value in params.items():
+        if isinstance(value, torch.Tensor):
+            continue
+        fallback_params[key] = value
+    return apply_bend(latent, fn_name, fallback_params)
+
+
 def build_bending(spec: BendSpec):
     target_steps = set(spec["steps"])
 
     def bending(video_state: LatentState, step_idx: int) -> LatentState:
         if step_idx not in target_steps:
             return video_state
-        print(
-            f"  Applying '{spec['function']}' at step {step_idx} with params={spec['params']}",
-        )
-        bent = apply_bend(video_state.latent, spec["function"], spec["params"])
+
+        resolved_params: dict[str, float | int | bool | torch.Tensor] = dict(spec["params"])
+        if spec.get("param_schedule") or spec.get("param_segments"):
+            for name, value in list(spec["params"].items()):
+                if isinstance(value, bool):
+                    continue
+                resolved_params[name] = _resolve_parameter(video_state, spec, name, float(value))
+
+        print(f"  Applying '{spec['function']}' at step {step_idx}")
+        bent = apply_bend_scheduled(video_state.latent, spec["function"], resolved_params)
         return replace(video_state, latent=bent)
 
     return bending
@@ -119,7 +265,6 @@ def safe_run_name(name: str) -> str:
 
 
 def create_batch_run_dir(root: Path) -> Path:
-    # Create a unique folder per script execution so outputs never overwrite prior runs.
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     base_name = f"run_{timestamp}"
     run_dir = root / base_name
@@ -141,7 +286,6 @@ def main() -> None:
     OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
     batch_run_dir = create_batch_run_dir(OUTPUT_ROOT)
 
-    # Load model components once, then swap the denoising loop for each run.
     pipeline = DistilledPipeline(
         distilled_checkpoint_path=base_cfg.distilled_checkpoint_path,
         gemma_root=base_cfg.gemma_root,
@@ -152,6 +296,73 @@ def main() -> None:
     )
 
     run_manifest: list[dict[str, Any]] = []
+
+    baseline_name = "000_baseline"
+    if SAVE_VIDEOS_ONLY:
+        baseline_video_path = batch_run_dir / f"{baseline_name}.mp4"
+        baseline_frames_dir: Path | None = None
+        baseline_run_dir: Path | None = None
+        if baseline_video_path.exists() and not OVERWRITE_EXISTING:
+            print(f"[baseline] Skipping existing video: {baseline_video_path.name}")
+            baseline_video_path = None
+    else:
+        baseline_run_dir = batch_run_dir / baseline_name
+        baseline_frames_dir = baseline_run_dir / "frames"
+        baseline_video_path = baseline_run_dir / "video.mp4"
+        if baseline_run_dir.exists() and not OVERWRITE_EXISTING:
+            print(f"[baseline] Skipping existing run: {baseline_name}")
+            baseline_video_path = None
+        else:
+            baseline_run_dir.mkdir(parents=True, exist_ok=True)
+
+    if baseline_video_path is not None:
+        print("[baseline] Running: 000_baseline")
+        video_chunks, audio = pipeline(
+            prompt=base_cfg.prompt,
+            seed=base_cfg.seed,
+            height=base_cfg.height,
+            width=base_cfg.width,
+            num_frames=base_cfg.num_frames,
+            frame_rate=base_cfg.frame_rate,
+            images=[],
+            tiling_config=None,
+            enhance_prompt=base_cfg.enhance_prompt,
+            streaming_prefetch_count=1,
+            denoising_loop=None,
+        )
+
+        if SAVE_VIDEOS_ONLY:
+            chunks = tuple(video_chunks)
+            if not chunks:
+                raise RuntimeError("Pipeline returned no video chunks for run: 000_baseline")
+            baseline_video_tensor = torch.cat(chunks, dim=2)
+        else:
+            assert baseline_frames_dir is not None
+            baseline_video_tensor = save_frames_and_collect(video_chunks, baseline_frames_dir)
+
+        encode_video(
+            video=baseline_video_tensor,
+            fps=int(base_cfg.frame_rate),
+            audio=audio,
+            output_path=str(baseline_video_path),
+            video_chunks_number=1,
+        )
+
+        if not SAVE_VIDEOS_ONLY:
+            assert baseline_run_dir is not None
+            assert baseline_frames_dir is not None
+            baseline_info = {
+                "run": baseline_name,
+                "function": "baseline",
+                "params": {},
+                "steps": [],
+                "frames_dir": str(baseline_frames_dir),
+                "video_path": str(baseline_video_path),
+            }
+            run_manifest.append(baseline_info)
+
+            with open(baseline_run_dir / "run.json", "w", encoding="utf-8") as f:
+                json.dump(baseline_info, f, indent=2)
 
     for run_idx, spec in enumerate(EXPERIMENTS, start=1):
         run_name = f"{run_idx:03d}_{safe_run_name(spec['name'])}"
@@ -185,7 +396,7 @@ def main() -> None:
             tiling_config=None,
             enhance_prompt=base_cfg.enhance_prompt,
             streaming_prefetch_count=1,
-            denoising_loop=denoising_loop
+            denoising_loop=denoising_loop,
         )
 
         if SAVE_VIDEOS_ONLY:
