@@ -1,5 +1,5 @@
 import logging
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 
 import torch
 
@@ -92,13 +92,19 @@ class DistilledPipeline:
         stage_1_sigmas: torch.Tensor = DISTILLED_SIGMAS,
         stage_2_sigmas: torch.Tensor = STAGE_2_DISTILLED_SIGMAS,
         denoising_loop=None,
+        progress: Callable[[str], None] | None = None,
     ) -> tuple[Iterator[torch.Tensor], Audio]:
         assert_resolution(height=height, width=width, is_two_stage=True)
+
+        def _p(phase: str) -> None:
+            if progress is not None:
+                progress(phase)
 
         generator = torch.Generator(device=self.device).manual_seed(seed)
         noiser = GaussianNoiser(generator=generator)
         dtype = torch.bfloat16
 
+        _p("encoding_prompt")
         (ctx_p,) = self.prompt_encoder(
             [prompt],
             enhance_first_prompt=enhance_prompt,
@@ -108,6 +114,7 @@ class DistilledPipeline:
         video_context, audio_context = ctx_p.video_encoding, ctx_p.audio_encoding
 
         # Stage 1: Initial low resolution video generation.
+        _p("conditioning_stage_1")
         stage_1_sigmas = stage_1_sigmas.to(dtype=torch.float32, device=self.device)
         stage_1_w, stage_1_h = width // 2, height // 2
         stage_1_conditionings = self.image_conditioner(
@@ -121,6 +128,7 @@ class DistilledPipeline:
             )
         )
 
+        _p("stage_1_loading")
         video_state, audio_state = self.stage(
             denoiser=SimpleDenoiser(video_context, audio_context),
             sigmas=stage_1_sigmas,
@@ -136,8 +144,10 @@ class DistilledPipeline:
         )
 
         # Stage 2: Upsample and refine the video at higher resolution with distilled LORA.
+        _p("upsampling")
         upscaled_video_latent = self.upsampler(video_state.latent[:1])
 
+        _p("conditioning_stage_2")
         stage_2_sigmas = stage_2_sigmas.to(dtype=torch.float32, device=self.device)
         stage_2_conditionings = self.image_conditioner(
             lambda enc: combined_image_conditionings(
@@ -150,6 +160,7 @@ class DistilledPipeline:
             )
         )
 
+        _p("stage_2")
         video_state, audio_state = self.stage(
             denoiser=SimpleDenoiser(video_context, audio_context),
             sigmas=stage_2_sigmas,
@@ -172,7 +183,9 @@ class DistilledPipeline:
             streaming_prefetch_count=streaming_prefetch_count,
         )
 
+        _p("decoding_video")
         decoded_video = self.video_decoder(video_state.latent, tiling_config, generator)
+        _p("decoding_audio")
         decoded_audio = self.audio_decoder(audio_state.latent)
         return decoded_video, decoded_audio
 

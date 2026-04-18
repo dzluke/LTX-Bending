@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { HistoryList } from "./components/HistoryList";
 import { GenerationViewer } from "./components/GenerationViewer";
 import { ParamForm } from "./components/ParamForm";
@@ -9,8 +9,10 @@ import { generate, Generation, GenerateRequest, listGenerations } from "./lib/ap
 export default function Home() {
   const [items, setItems] = useState<Generation[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [running, setRunning] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const hasRunning = useMemo(() => items.some((g) => g.status.state === "running"), [items]);
 
   const refresh = useCallback(async () => {
     try {
@@ -24,12 +26,16 @@ export default function Home() {
 
   useEffect(() => {
     refresh();
-    const t = setInterval(refresh, 5000);
-    return () => clearInterval(t);
   }, [refresh]);
 
+  useEffect(() => {
+    const interval = hasRunning ? 1000 : 5000;
+    const t = setInterval(refresh, interval);
+    return () => clearInterval(t);
+  }, [refresh, hasRunning]);
+
   async function onSubmit(req: GenerateRequest) {
-    setRunning(true);
+    setSubmitting(true);
     setError(null);
     try {
       const result = await generate(req);
@@ -38,7 +44,7 @@ export default function Home() {
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
-      setRunning(false);
+      setSubmitting(false);
     }
   }
 
@@ -61,7 +67,7 @@ export default function Home() {
         <div className="p-3 font-semibold text-sm border-b border-zinc-200 dark:border-zinc-800">
           Parameters
         </div>
-        <ParamForm running={running} onSubmit={onSubmit} error={error} />
+        <ParamForm running={submitting} onSubmit={onSubmit} error={error} />
       </aside>
     </div>
   );

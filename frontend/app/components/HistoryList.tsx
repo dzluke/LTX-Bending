@@ -45,7 +45,7 @@ function shortTs(id: string): string {
   return ts?.replace("T", " ") ?? id;
 }
 
-function StatusBadge({ state }: { state: string }) {
+function StatusBadge({ state }: { state: "running" | "done" | "error" | string }) {
   const color =
     state === "done"
       ? "bg-green-600"

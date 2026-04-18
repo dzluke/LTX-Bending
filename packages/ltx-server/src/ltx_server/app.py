@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
 os.environ.setdefault("PYTORCH_ALLOC_CONF", "expandable_segments:True")
 os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
@@ -18,6 +21,7 @@ from ltx_server.pipeline_runner import PipelineRunner  # noqa: E402
 from ltx_server.schemas import GenerateRequest  # noqa: E402
 from ltx_server.storage import (  # noqa: E402
     GENERATIONS_ROOT,
+    clear_stale_running,
     create_generation,
     list_generations,
     mark_done,
@@ -36,6 +40,9 @@ async def lifespan(app: FastAPI):
     cfg = load_config()
     validate_config(cfg)
     GENERATIONS_ROOT.mkdir(parents=True, exist_ok=True)
+    stale = clear_stale_running()
+    if stale:
+        logger.info("Cleared %d stale 'running' generation(s) from a previous process.", stale)
 
     logger.info("Loading DistilledPipeline (this may take a while)...")
     pipeline = DistilledPipeline(
@@ -88,6 +95,16 @@ async def api_get_video(gen_id: str):
     return FileResponse(path, media_type="video/mp4")
 
 
+async def _run_generation(runner: PipelineRunner, gen_id: str, req: GenerateRequest) -> None:
+    try:
+        await runner.generate(gen_id, req)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Generation %s failed", gen_id)
+        mark_error(gen_id, f"{type(exc).__name__}: {exc}")
+    else:
+        mark_done(gen_id)
+
+
 @app.post("/api/generate")
 async def api_generate(req: GenerateRequest) -> dict:
     gen_id = new_generation_id()
@@ -95,16 +112,24 @@ async def api_generate(req: GenerateRequest) -> dict:
     create_generation(gen_id, config_snapshot)
 
     runner: PipelineRunner = app.state.runner
-    try:
-        await runner.generate(gen_id, req)
-    except Exception as exc:  # noqa: BLE001
-        logger.exception("Generation %s failed", gen_id)
-        mark_error(gen_id, f"{type(exc).__name__}: {exc}")
-        raise HTTPException(status_code=500, detail=f"{type(exc).__name__}: {exc}") from exc
+    asyncio.create_task(_run_generation(runner, gen_id, req))
 
-    mark_done(gen_id)
     return {
         "id": gen_id,
-        "status": "done",
+        "status": "running",
         "video_url": f"/api/generations/{gen_id}/video",
     }
+
+
+# Serve the pre-built Next.js static export from frontend/out/ at the root.
+# Mounted last so /api/* routes take precedence. Run `pnpm build` in frontend/
+# to regenerate after changes.
+_FRONTEND_DIR = Path(os.environ.get("LTX_FRONTEND_DIR", "frontend/out")).resolve()
+if _FRONTEND_DIR.is_dir():
+    app.mount("/", StaticFiles(directory=_FRONTEND_DIR, html=True), name="frontend")
+    logger.info("Serving frontend from %s", _FRONTEND_DIR)
+else:
+    logger.info(
+        "No frontend build at %s; API-only mode. Run `pnpm build` in frontend/ to enable.",
+        _FRONTEND_DIR,
+    )

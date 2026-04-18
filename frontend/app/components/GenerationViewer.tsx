@@ -1,6 +1,17 @@
 "use client";
 
-import { Generation, videoUrl } from "../lib/api";
+import { Generation, GenerationStatus, videoUrl } from "../lib/api";
+
+function formatPhase(status: GenerationStatus): string {
+  if (!status.phase) return "starting…";
+  if (status.step !== undefined && status.total !== undefined) {
+    return `${status.phase} ${status.step + 1}/${status.total}`;
+  }
+  if (status.step !== undefined) {
+    return `${status.phase} (${status.step})`;
+  }
+  return status.phase;
+}
 
 interface Props {
   generation: Generation | null;
@@ -30,8 +41,17 @@ export function GenerationViewer({ generation }: Props) {
             src={videoUrl(generation.id)}
           />
         ) : (
-          <div className="h-[40vh] w-full max-w-2xl rounded bg-zinc-200 dark:bg-zinc-900 flex items-center justify-center text-zinc-500">
-            {isError ? "Generation failed." : "Running..."}
+          <div className="h-[40vh] w-full max-w-2xl rounded bg-zinc-200 dark:bg-zinc-900 flex flex-col items-center justify-center gap-2 text-zinc-500">
+            {isError ? (
+              <span>Generation failed.</span>
+            ) : (
+              <>
+                <span className="text-sm">Running…</span>
+                <span className="text-xs font-mono">
+                  {formatPhase(generation.status)}
+                </span>
+              </>
+            )}
           </div>
         )}
         <div className="text-xs text-zinc-500 font-mono">{generation.id}</div>
