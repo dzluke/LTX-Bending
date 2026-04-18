@@ -1,0 +1,18 @@
+[project]
+name = "ltx-server"
+version = "0.1.0"
+description = "FastAPI server wrapping LTX-2 network-bending video generation"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "ltx-core",
+    "ltx-pipelines",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "pydantic>=2.12",
+    "pyyaml>=6.0",
+]
+
+[build-system]
+requires = ["uv_build>=0.9.8,<0.10.0"]
+build-backend = "uv_build"

@@ -173,7 +173,16 @@ def main() -> None:
             run_dir.mkdir(parents=True, exist_ok=True)
 
         print(f"[{run_idx}/{len(EXPERIMENTS)}] Running: {run_name}")
-        pipeline.denoising_loop = make_network_bending_loop(build_bending(spec))
+        denoising_loop = make_network_bending_loop(build_bending(spec))
+        pipeline = DistilledPipeline(
+            distilled_checkpoint_path=base_cfg.distilled_checkpoint_path,
+            gemma_root=base_cfg.gemma_root,
+            spatial_upsampler_path=base_cfg.spatial_upsampler_path,
+            loras=base_cfg.loras,
+            quantization=base_cfg.quantization_policy(),
+            torch_compile=base_cfg.torch_compile,
+            denoising_loop=denoising_loop,
+        )
 
         video_chunks, audio = pipeline(
             prompt=base_cfg.prompt,
@@ -186,6 +195,7 @@ def main() -> None:
             tiling_config=None,
             enhance_prompt=base_cfg.enhance_prompt,
             streaming_prefetch_count=1,
+            denoising_loop=denoising_loop,
         )
 
         if SAVE_VIDEOS_ONLY:

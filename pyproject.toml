@@ -1,10 +1,14 @@
 [tool.uv.sources]
 ltx-core = { workspace = true }
 ltx-pipelines = { workspace = true }
+ltx-server = { workspace = true }
 torch = [
   { index = "pytorch-cu126", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
 torchvision = [
+  { index = "pytorch-cu126", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+torchaudio = [
   { index = "pytorch-cu126", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
 
@@ -74,4 +78,4 @@ ignore = [
 max-args = 10
 
 [tool.ruff.lint.isort]
-known-first-party = ["ltx_core", "ltx_pipelines", "ltx_trainer"]
+known-first-party = ["ltx_core", "ltx_pipelines", "ltx_server", "ltx_trainer"]
