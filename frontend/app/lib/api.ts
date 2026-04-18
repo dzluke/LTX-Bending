@@ -9,7 +9,9 @@ export type BendFunctionName =
   | "multiply_scalar"
   | "invert"
   | "reflect"
-  | "rotate";
+  | "rotate"
+  | "add_gaussian_noise"
+  | "add_random_vector";
 
 export interface BendSpec {
   name: string;

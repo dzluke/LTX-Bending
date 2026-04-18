@@ -30,6 +30,8 @@ def make_network_bending_loop(
         for step_idx, _ in enumerate(tqdm(sigmas[:-1])):
             if video_state is not None:
                 video_state = bend_video(video_state, step_idx)
+            if audio_state is not None:
+                audio_state = bend_video(audio_state, step_idx)
 
             denoised_video, denoised_audio = denoiser(transformer, video_state, audio_state, sigmas, step_idx)
 
