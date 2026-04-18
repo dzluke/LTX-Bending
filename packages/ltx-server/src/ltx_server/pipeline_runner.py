@@ -43,7 +43,7 @@ class PipelineRunner:
             gen_id, req.prompt[:60], req.width, req.height, req.num_frames, len(req.bending_ops),
         )
 
-        # Wrap the user-supplied bending with phase progress reporting.
+        # Wrap the user-supplied bending with per-step progress reporting.
         # DistilledPipeline uses this loop for stage 1 only (8 steps).
         STAGE_1_STEPS = 8
         bend_fn = compile_bending_specs(req.bending_ops)
@@ -54,8 +54,11 @@ class PipelineRunner:
 
         loop = make_network_bending_loop(progress_bend)
 
+        def report_phase(phase: str) -> None:
+            logger.info("[%s] phase: %s", gen_id, phase)
+            update_phase(gen_id, phase)
+
         with torch.inference_mode():
-            update_phase(gen_id, "encoding_prompt")
             logger.info("[%s] running pipeline...", gen_id)
             video_chunks, audio = self._pipeline(
                 prompt=req.prompt,
@@ -69,6 +72,7 @@ class PipelineRunner:
                 enhance_prompt=req.enhance_prompt,
                 streaming_prefetch_count=req.streaming_prefetch_count,
                 denoising_loop=loop,
+                progress=report_phase,
             )
 
             out_dir = generation_dir(gen_id)

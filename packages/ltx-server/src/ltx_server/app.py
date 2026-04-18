@@ -1,14 +1,15 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
-
-import asyncio
+from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
 os.environ.setdefault("PYTORCH_ALLOC_CONF", "expandable_segments:True")
 os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
@@ -118,3 +119,17 @@ async def api_generate(req: GenerateRequest) -> dict:
         "status": "running",
         "video_url": f"/api/generations/{gen_id}/video",
     }
+
+
+# Serve the pre-built Next.js static export from frontend/out/ at the root.
+# Mounted last so /api/* routes take precedence. Run `pnpm build` in frontend/
+# to regenerate after changes.
+_FRONTEND_DIR = Path(os.environ.get("LTX_FRONTEND_DIR", "frontend/out")).resolve()
+if _FRONTEND_DIR.is_dir():
+    app.mount("/", StaticFiles(directory=_FRONTEND_DIR, html=True), name="frontend")
+    logger.info("Serving frontend from %s", _FRONTEND_DIR)
+else:
+    logger.info(
+        "No frontend build at %s; API-only mode. Run `pnpm build` in frontend/ to enable.",
+        _FRONTEND_DIR,
+    )
