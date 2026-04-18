@@ -97,7 +97,20 @@ def _normalize_time_progress(video_state: LatentState) -> torch.Tensor:
     if video_state.positions is None:
         raise ValueError("video_state.positions is required for param scheduling")
 
-    time_axis = video_state.positions[0, 0, :, 0, 0].to(video_state.latent.device, dtype=torch.float32)
+    positions = video_state.positions
+    if positions.ndim == 5:
+        time_axis = positions[0, 0, :, 0, 0]
+    elif positions.ndim == 4:
+        # Common layout in this repo: (B, 3, tokens, 2) with [start, end) bounds.
+        time_axis = positions[0, 0, :, 0]
+    elif positions.ndim == 3:
+        time_axis = positions[0, 0, :]
+    elif positions.ndim == 2:
+        time_axis = positions[0, :]
+    else:
+        raise ValueError(f"Unsupported positions shape for scheduling: {tuple(positions.shape)}")
+
+    time_axis = time_axis.to(video_state.latent.device, dtype=torch.float32)
     t_min = torch.min(time_axis)
     t_max = torch.max(time_axis)
     if torch.isclose(t_min, t_max):
@@ -219,15 +232,32 @@ def apply_bend_scheduled(
     fn_name: BendFunctionName,
     params: dict[str, float | int | bool | torch.Tensor],
 ) -> torch.Tensor:
+    def _expand_over_token_axis(values: torch.Tensor) -> torch.Tensor:
+        """Broadcast per-token values across the latent tensor regardless of latent rank."""
+        token_count = int(values.numel())
+        token_axis = None
+        for axis in range(1, latent.ndim):
+            if latent.shape[axis] == token_count:
+                token_axis = axis
+                break
+        if token_axis is None:
+            raise ValueError(
+                f"Cannot align scheduled parameter of length {token_count} with latent shape {tuple(latent.shape)}",
+            )
+
+        view_shape = [1] * latent.ndim
+        view_shape[token_axis] = token_count
+        return values.view(*view_shape).to(device=latent.device, dtype=latent.dtype)
+
     if fn_name == "add_scalar":
         value = params.get("value", 0.0)
         if isinstance(value, torch.Tensor):
-            return latent + value.view(1, 1, -1, 1, 1).to(device=latent.device, dtype=latent.dtype)
+            return latent + _expand_over_token_axis(value)
         return add_scalar(latent, value=float(value))
     if fn_name == "multiply_scalar":
         factor = params.get("factor", 1.0)
         if isinstance(factor, torch.Tensor):
-            return latent * factor.view(1, 1, -1, 1, 1).to(device=latent.device, dtype=latent.dtype)
+            return latent * _expand_over_token_axis(factor)
         return multiply_scalar(latent, factor=float(factor))
 
     fallback_params: dict[str, float | int | bool] = {}
