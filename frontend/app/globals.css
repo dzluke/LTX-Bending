@@ -24,3 +24,27 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+.input {
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid rgb(212 212 216);
+  border-radius: 4px;
+  background: white;
+  color: black;
+  font-size: 13px;
+}
+@media (prefers-color-scheme: dark) {
+  .input {
+    background: rgb(24 24 27);
+    color: white;
+    border-color: rgb(63 63 70);
+  }
+}
+
+.btn-sm {
+  font-size: 12px;
+  padding: 2px 8px;
+  border: 1px solid rgb(212 212 216);
+  border-radius: 4px;
+}

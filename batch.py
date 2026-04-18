@@ -110,7 +110,6 @@ def main() -> None:
             loras=base_cfg.loras,
             quantization=base_cfg.quantization_policy(),
             torch_compile=base_cfg.torch_compile,
-            denoising_loop=denoising_loop,
         )
 
         video_chunks, audio = pipeline(
@@ -124,6 +123,7 @@ def main() -> None:
             tiling_config=None,
             enhance_prompt=base_cfg.enhance_prompt,
             streaming_prefetch_count=1,
+            denoising_loop=denoising_loop,
         )
 
         video_tensor = save_frames_and_collect(video_chunks, frames_dir)
