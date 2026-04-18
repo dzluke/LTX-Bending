@@ -18,7 +18,7 @@ from ltx_pipelines.utils.helpers import cleanup_memory
 from ltx_pipelines.utils.media_io import encode_video
 
 from ltx_server.schemas import BendFunctionName, BendSpec, GenerateRequest
-from ltx_server.storage import generation_dir, video_path
+from ltx_server.storage import generation_dir, update_phase, video_path
 
 logger = logging.getLogger(__name__)
 
@@ -38,10 +38,25 @@ class PipelineRunner:
                 cleanup_memory()
 
     def _run_sync(self, gen_id: str, req: GenerateRequest) -> None:
+        logger.info(
+            "[%s] generate: prompt=%r size=%sx%s frames=%s ops=%d",
+            gen_id, req.prompt[:60], req.width, req.height, req.num_frames, len(req.bending_ops),
+        )
+
+        # Wrap the user-supplied bending with phase progress reporting.
+        # DistilledPipeline uses this loop for stage 1 only (8 steps).
+        STAGE_1_STEPS = 8
         bend_fn = compile_bending_specs(req.bending_ops)
-        loop = make_network_bending_loop(bend_fn)
+
+        def progress_bend(state: LatentState, step_idx: int) -> LatentState:
+            update_phase(gen_id, "stage_1", step=step_idx, total=STAGE_1_STEPS)
+            return bend_fn(state, step_idx)
+
+        loop = make_network_bending_loop(progress_bend)
 
         with torch.inference_mode():
+            update_phase(gen_id, "encoding_prompt")
+            logger.info("[%s] running pipeline...", gen_id)
             video_chunks, audio = self._pipeline(
                 prompt=req.prompt,
                 seed=req.seed,
@@ -59,8 +74,12 @@ class PipelineRunner:
             out_dir = generation_dir(gen_id)
             out_dir.mkdir(parents=True, exist_ok=True)
             with tempfile.TemporaryDirectory(prefix="frames_", dir=out_dir) as frames_dir:
+                update_phase(gen_id, "decoding")
+                logger.info("[%s] collecting video chunks...", gen_id)
                 video_tensor = _collect_chunks(video_chunks, Path(frames_dir))
 
+            update_phase(gen_id, "encoding_video", step=video_tensor.shape[0])
+            logger.info("[%s] encoding %d frames to mp4...", gen_id, video_tensor.shape[0])
             encode_video(
                 video=video_tensor,
                 fps=int(req.frame_rate),
@@ -68,6 +87,7 @@ class PipelineRunner:
                 output_path=str(video_path(gen_id)),
                 video_chunks_number=1,
             )
+            logger.info("[%s] done", gen_id)
 
 
 def _collect_chunks(video_chunks: Any, frames_dir: Path) -> torch.Tensor:
