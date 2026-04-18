@@ -25,6 +25,17 @@ function defaultParams(fn: BendFunctionName): Record<string, number> {
   return {};
 }
 
+const PARAM_STEPS: Partial<Record<BendFunctionName, Record<string, number>>> = {
+  add_scalar: { value: 0.01 },
+  multiply_scalar: { factor: 0.1 },
+  reflect: { dim: 1 },
+  rotate: { k: 1 },
+};
+
+function paramStep(fn: BendFunctionName, key: string): number {
+  return PARAM_STEPS[fn]?.[key] ?? 0.1;
+}
+
 export function ParamForm({ running, onSubmit, error }: Props) {
   const [prompt, setPrompt] = useState("A cinematic portrait of a fox in a misty forest at sunrise");
   const [seed, setSeed] = useState(42);
@@ -198,8 +209,8 @@ function SpecRow({
         </select>
         <button type="button" onClick={onRemove} className="btn-sm ml-auto">✕</button>
       </div>
-      <label className="text-xs flex items-center gap-1">
-        steps
+      <label className="text-xs flex flex-col sm:flex-row sm:items-center gap-1">
+        <span>steps</span>
         <input
           type="text"
           className="input"
@@ -231,7 +242,7 @@ function ParamInputs({
           {key}
           <input
             type="number"
-            step="0.1"
+            step={paramStep(spec.function, key)}
             className="input"
             value={Number(spec.params[key] ?? 0)}
             onChange={(e) => onParam(key, Number(e.target.value))}

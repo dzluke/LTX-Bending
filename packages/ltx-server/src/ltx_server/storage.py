@@ -14,6 +14,24 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+def _elapsed_since(iso_ts: str) -> float:
+    try:
+        started = datetime.fromisoformat(iso_ts)
+    except ValueError:
+        return 0.0
+    return max(0.0, (datetime.now(timezone.utc) - started).total_seconds())
+
+
+def _close_current_phase(status: dict[str, Any]) -> None:
+    """Record the duration of the phase currently in `status` into `phase_durations`."""
+    phase = status.get("phase")
+    started = status.get("phase_started_at")
+    if not phase or not started:
+        return
+    durations = status.setdefault("phase_durations", {})
+    durations[phase] = round(durations.get(phase, 0.0) + _elapsed_since(started), 3)
+
+
 def _atomic_write_json(path: Path, data: dict[str, Any]) -> None:
     """Write JSON via temp-file + rename so readers never see a half-written file."""
     tmp = path.with_suffix(path.suffix + ".tmp")
@@ -59,18 +77,22 @@ def write_status(gen_id: str, status: dict[str, Any]) -> None:
 def mark_done(gen_id: str) -> None:
     path = generation_dir(gen_id) / "status.json"
     status = _read_json_tolerant(path) or {"started_at": _now_iso()}
+    _close_current_phase(status)
     status["state"] = "done"
     status["finished_at"] = _now_iso()
     status.pop("phase", None)
+    status.pop("phase_started_at", None)
     _atomic_write_json(path, status)
 
 
 def mark_error(gen_id: str, message: str) -> None:
     path = generation_dir(gen_id) / "status.json"
     status = _read_json_tolerant(path) or {"started_at": _now_iso()}
+    _close_current_phase(status)
     status["state"] = "error"
     status["finished_at"] = _now_iso()
     status["error"] = message
+    status.pop("phase_started_at", None)
     _atomic_write_json(path, status)
 
 
@@ -79,7 +101,12 @@ def update_phase(gen_id: str, phase: str, step: int | None = None, total: int | 
     status = _read_json_tolerant(path)
     if status is None:
         return
-    status["phase"] = phase
+    if status.get("phase") != phase:
+        _close_current_phase(status)
+        status["phase"] = phase
+        status["phase_started_at"] = _now_iso()
+        status.pop("step", None)
+        status.pop("total", None)
     if step is not None:
         status["step"] = step
     if total is not None:
@@ -113,10 +140,12 @@ def clear_stale_running() -> int:
         status_path = child / "status.json"
         status = _read_json_tolerant(status_path)
         if status and status.get("state") == "running":
+            _close_current_phase(status)
             status["state"] = "error"
             status["finished_at"] = _now_iso()
             status["error"] = "server restarted before generation finished"
             status.pop("phase", None)
+            status.pop("phase_started_at", None)
             _atomic_write_json(status_path, status)
             count += 1
     return count

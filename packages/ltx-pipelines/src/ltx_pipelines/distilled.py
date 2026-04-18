@@ -8,6 +8,7 @@ from ltx_core.loader import LoraPathStrengthAndSDOps
 from ltx_core.loader.registry import Registry
 from ltx_core.model.video_vae import TilingConfig, get_video_chunks_number
 from ltx_core.quantization import QuantizationPolicy
+from ltx_core.text_encoders.gemma.embeddings_processor import EmbeddingsProcessorOutput
 from ltx_core.types import Audio
 from ltx_pipelines.utils.args import (
     ImageConditioningInput,
@@ -79,7 +80,7 @@ class DistilledPipeline:
 
     def __call__(  # noqa: PLR0913
         self,
-        prompt: str,
+        prompt: str | EmbeddingsProcessorOutput,
         seed: int,
         height: int,
         width: int,
@@ -104,13 +105,17 @@ class DistilledPipeline:
         noiser = GaussianNoiser(generator=generator)
         dtype = torch.bfloat16
 
-        _p("encoding_prompt")
-        (ctx_p,) = self.prompt_encoder(
-            [prompt],
-            enhance_first_prompt=enhance_prompt,
-            enhance_prompt_image=images[0][0] if len(images) > 0 else None,
-            streaming_prefetch_count=streaming_prefetch_count,
-        )
+        if isinstance(prompt, str):
+            _p("encoding_prompt")
+            (ctx_p,) = self.prompt_encoder(
+                [prompt],
+                enhance_first_prompt=enhance_prompt,
+                enhance_prompt_image=images[0][0] if len(images) > 0 else None,
+                streaming_prefetch_count=streaming_prefetch_count,
+            )
+        else:
+            assert not enhance_prompt, "enhance_prompt=True is incompatible with a precomputed prompt embedding"
+            ctx_p = prompt
         video_context, audio_context = ctx_p.video_encoding, ctx_p.audio_encoding
 
         # Stage 1: Initial low resolution video generation.
