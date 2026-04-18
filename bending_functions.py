@@ -26,18 +26,3 @@ def reflect(latent: torch.Tensor, dim: int = -1) -> torch.Tensor:
 def rotate(latent: torch.Tensor, k: int = 1) -> torch.Tensor:
     """Rotate the latent spatial plane by 90-degree increments."""
     return torch.rot90(latent, k=k, dims=(-2, -1))
-
-
-def exponential(latent: torch.Tensor) -> torch.Tensor:
-    """Apply an element-wise exponential transform to the latent."""
-    return torch.exp(latent)
-
-
-def logarithm(latent: torch.Tensor, eps: float = 1e-8) -> torch.Tensor:
-    """Apply a numerically stable element-wise natural logarithm."""
-    return torch.log(torch.clamp(latent, min=eps))
-
-
-def power(latent: torch.Tensor, exponent: float) -> torch.Tensor:
-    """Raise each latent element to the given exponent."""
-    return torch.pow(latent, exponent)
