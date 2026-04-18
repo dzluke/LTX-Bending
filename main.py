@@ -119,7 +119,7 @@ def main() -> None:
 			return replace(video_state, latent=video_state.latent * 2.0)
 		return video_state
 
-	denoising_loop2 = make_network_bending_loop(bending)
+	# denoising_loop = make_network_bending_loop(bending)
 
 	pipeline = DistilledPipeline(
 		distilled_checkpoint_path=cfg.distilled_checkpoint_path,
@@ -128,7 +128,7 @@ def main() -> None:
 		loras=cfg.loras,
 		quantization=cfg.quantization_policy(),
 		torch_compile=cfg.torch_compile,
-		denoising_loop=denoising_loop2,
+		denoising_loop=denoising_loop,
 	)
 
 	video_chunks, audio = pipeline(
