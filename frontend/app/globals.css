@@ -32,7 +32,12 @@ body {
   border-radius: 4px;
   background: white;
   color: black;
-  font-size: 13px;
+  font-size: 16px;
+}
+@media (min-width: 640px) {
+  .input {
+    font-size: 13px;
+  }
 }
 @media (prefers-color-scheme: dark) {
   .input {
@@ -44,7 +49,9 @@ body {
 
 .btn-sm {
   font-size: 12px;
-  padding: 2px 8px;
+  padding: 4px 10px;
+  min-height: 32px;
+  min-width: 32px;
   border: 1px solid rgb(212 212 216);
   border-radius: 4px;
 }

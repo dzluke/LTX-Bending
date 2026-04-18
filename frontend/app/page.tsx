@@ -51,23 +51,23 @@ export default function Home() {
   const selected = items.find((g) => g.id === selectedId) ?? null;
 
   return (
-    <div className="flex flex-1 h-screen bg-zinc-50 dark:bg-black text-zinc-950 dark:text-zinc-50">
-      <aside className="w-72 border-r border-zinc-200 dark:border-zinc-800 overflow-y-auto">
-        <div className="p-3 font-semibold text-sm border-b border-zinc-200 dark:border-zinc-800">
-          History
-        </div>
-        <HistoryList items={items} selectedId={selectedId} onSelect={setSelectedId} />
-      </aside>
-
-      <main className="flex-1 flex flex-col min-w-0">
+    <div className="md:flex md:flex-row md:h-[100dvh] bg-zinc-50 dark:bg-black text-zinc-950 dark:text-zinc-50">
+      <main className="md:order-2 md:flex md:flex-col md:flex-1 md:min-w-0 md:overflow-y-auto border-b md:border-b-0 border-zinc-200 dark:border-zinc-800">
         <GenerationViewer generation={selected} />
       </main>
 
-      <aside className="w-96 border-l border-zinc-200 dark:border-zinc-800 overflow-y-auto">
+      <aside className="md:order-3 md:flex md:flex-col md:w-96 md:flex-none md:overflow-y-auto md:border-l border-b md:border-b-0 border-zinc-200 dark:border-zinc-800">
         <div className="p-3 font-semibold text-sm border-b border-zinc-200 dark:border-zinc-800">
           Parameters
         </div>
         <ParamForm running={submitting} onSubmit={onSubmit} error={error} />
+      </aside>
+
+      <aside className="md:order-1 md:flex md:flex-col md:w-72 md:flex-none md:overflow-y-auto md:border-r border-zinc-200 dark:border-zinc-800">
+        <div className="p-3 font-semibold text-sm border-b border-zinc-200 dark:border-zinc-800">
+          History
+        </div>
+        <HistoryList items={items} selectedId={selectedId} onSelect={setSelectedId} />
       </aside>
     </div>
   );

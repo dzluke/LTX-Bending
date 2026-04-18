@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import tempfile
+from collections import OrderedDict
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -11,6 +12,7 @@ import torch
 from fastapi.concurrency import run_in_threadpool
 
 from bending_functions import add_scalar, invert, multiply_scalar, reflect, rotate
+from ltx_core.text_encoders.gemma.embeddings_processor import EmbeddingsProcessorOutput
 from ltx_core.types import LatentState
 from ltx_pipelines import DistilledPipeline
 from ltx_pipelines.utils.bending import VideoBendingFn, make_network_bending_loop
@@ -22,6 +24,8 @@ from ltx_server.storage import generation_dir, update_phase, video_path
 
 logger = logging.getLogger(__name__)
 
+PROMPT_CACHE_MAX = 64
+
 
 class PipelineRunner:
     """Owns the single shared DistilledPipeline and serializes generation requests."""
@@ -29,6 +33,29 @@ class PipelineRunner:
     def __init__(self, pipeline: DistilledPipeline) -> None:
         self._pipeline = pipeline
         self._lock = asyncio.Lock()
+        self._prompt_cache: OrderedDict[tuple[str, bool], EmbeddingsProcessorOutput] = OrderedDict()
+
+    def _get_prompt_embedding(
+        self, prompt: str, enhance_prompt: bool, streaming_prefetch_count: int | None
+    ) -> EmbeddingsProcessorOutput:
+        key = (prompt, enhance_prompt)
+        cached = self._prompt_cache.get(key)
+        if cached is not None:
+            self._prompt_cache.move_to_end(key)
+            logger.info("prompt cache hit (size=%d)", len(self._prompt_cache))
+        else:
+            logger.info("prompt cache miss; encoding (size=%d)", len(self._prompt_cache))
+            (ctx,) = self._pipeline.prompt_encoder(
+                [prompt],
+                enhance_first_prompt=enhance_prompt,
+                enhance_prompt_image=None,
+                streaming_prefetch_count=streaming_prefetch_count,
+            )
+            cached = _embedding_to(ctx, torch.device("cpu"))
+            self._prompt_cache[key] = cached
+            while len(self._prompt_cache) > PROMPT_CACHE_MAX:
+                self._prompt_cache.popitem(last=False)
+        return _embedding_to(cached, self._pipeline.device)
 
     async def generate(self, gen_id: str, req: GenerateRequest) -> None:
         async with self._lock:
@@ -59,9 +86,14 @@ class PipelineRunner:
             update_phase(gen_id, phase)
 
         with torch.inference_mode():
+            update_phase(gen_id, "encoding_prompt")
+            prompt_embedding = self._get_prompt_embedding(
+                req.prompt, req.enhance_prompt, req.streaming_prefetch_count
+            )
+
             logger.info("[%s] running pipeline...", gen_id)
             video_chunks, audio = self._pipeline(
-                prompt=req.prompt,
+                prompt=prompt_embedding,
                 seed=req.seed,
                 height=req.height,
                 width=req.width,
@@ -69,7 +101,7 @@ class PipelineRunner:
                 frame_rate=req.frame_rate,
                 images=[],
                 tiling_config=None,
-                enhance_prompt=req.enhance_prompt,
+                enhance_prompt=False,
                 streaming_prefetch_count=req.streaming_prefetch_count,
                 denoising_loop=loop,
                 progress=report_phase,
@@ -92,6 +124,14 @@ class PipelineRunner:
                 video_chunks_number=1,
             )
             logger.info("[%s] done", gen_id)
+
+
+def _embedding_to(ctx: EmbeddingsProcessorOutput, device: torch.device) -> EmbeddingsProcessorOutput:
+    return EmbeddingsProcessorOutput(
+        video_encoding=ctx.video_encoding.to(device),
+        audio_encoding=ctx.audio_encoding.to(device) if ctx.audio_encoding is not None else None,
+        attention_mask=ctx.attention_mask.to(device),
+    )
 
 
 def _collect_chunks(video_chunks: Any, frames_dir: Path) -> torch.Tensor:

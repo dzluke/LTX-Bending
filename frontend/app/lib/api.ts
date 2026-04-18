@@ -36,6 +36,8 @@ export interface GenerationStatus {
   finished_at?: string | null;
   error?: string | null;
   phase?: string;
+  phase_started_at?: string;
+  phase_durations?: Record<string, number>;
   step?: number;
   total?: number;
 }

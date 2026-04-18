@@ -23,7 +23,7 @@ export function HistoryList({ items, selectedId, onSelect }: Props) {
           <li key={g.id}>
             <button
               onClick={() => onSelect(g.id)}
-              className={`w-full text-left px-3 py-2 hover:bg-zinc-100 dark:hover:bg-zinc-900 ${
+              className={`w-full text-left px-3 py-3 sm:py-2 hover:bg-zinc-100 dark:hover:bg-zinc-900 ${
                 selected ? "bg-zinc-100 dark:bg-zinc-900" : ""
               }`}
             >

@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { Generation, GenerationStatus, videoUrl } from "../lib/api";
 
 function formatPhase(status: GenerationStatus): string {
@@ -30,14 +31,14 @@ export function GenerationViewer({ generation }: Props) {
   const isError = generation.status.state === "error";
 
   return (
-    <div className="flex-1 flex flex-col p-6 gap-4 overflow-y-auto">
+    <div className="flex-1 flex flex-col p-3 sm:p-6 gap-4 overflow-y-auto">
       <div className="flex flex-col items-center gap-3">
         {isDone ? (
           <video
             key={generation.id}
             controls
             loop
-            className="max-h-[60vh] w-auto rounded bg-black"
+            className="w-full max-h-[60vh] rounded bg-black"
             src={videoUrl(generation.id)}
           />
         ) : (
@@ -61,16 +62,30 @@ export function GenerationViewer({ generation }: Props) {
           </div>
         )}
       </div>
-      <section className="mt-2">
-        <h2 className="text-sm font-semibold mb-2">Config</h2>
-        <pre className="text-xs bg-zinc-100 dark:bg-zinc-900 p-3 rounded overflow-x-auto">
-{JSON.stringify(generation.config, null, 2)}
-        </pre>
-        <h2 className="text-sm font-semibold mt-4 mb-2">Status</h2>
-        <pre className="text-xs bg-zinc-100 dark:bg-zinc-900 p-3 rounded overflow-x-auto">
-{JSON.stringify(generation.status, null, 2)}
-        </pre>
+      <section className="mt-2 flex flex-col gap-3">
+        <JsonDetails title="Config" value={generation.config} />
+        <JsonDetails title="Status" value={generation.status} />
       </section>
     </div>
+  );
+}
+
+function JsonDetails({ title, value }: { title: string; value: unknown }) {
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    setOpen(window.matchMedia("(min-width: 768px)").matches);
+  }, []);
+  return (
+    <details
+      open={open}
+      onToggle={(e) => setOpen((e.currentTarget as HTMLDetailsElement).open)}
+    >
+      <summary className="text-sm font-semibold mb-2 cursor-pointer select-none">
+        {title}
+      </summary>
+      <pre className="text-xs bg-zinc-100 dark:bg-zinc-900 p-3 rounded overflow-x-auto">
+{JSON.stringify(value, null, 2)}
+      </pre>
+    </details>
   );
 }
