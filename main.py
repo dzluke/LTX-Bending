@@ -12,9 +12,11 @@ os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 
 from pathlib import Path
 from typing import Literal
+from urllib.parse import urlparse
 
 import torch
 import yaml
+from huggingface_hub import hf_hub_download, snapshot_download
 from PIL import Image
 from pydantic import BaseModel
 
@@ -56,6 +58,99 @@ class Config(BaseModel):
 		return getattr(QuantizationPolicy, self.quantization)()
 
 
+def _is_local_path(path_or_ref: str) -> bool:
+	return path_or_ref.startswith(("/", "./", "../", "~"))
+
+
+def _parse_hf_reference(path_or_ref: str) -> tuple[str, str | None, str | None]:
+	revision: str | None = None
+
+	if path_or_ref.startswith("hf://"):
+		parts = [p for p in path_or_ref.removeprefix("hf://").strip("/").split("/") if p]
+		if parts and parts[0] in {"models", "datasets", "spaces"}:
+			parts = parts[1:]
+	elif path_or_ref.startswith(("http://", "https://")):
+		parsed = urlparse(path_or_ref)
+		if parsed.netloc != "huggingface.co":
+			raise ValueError("Only huggingface.co URLs are supported for remote model references.")
+		parts = [p for p in parsed.path.strip("/").split("/") if p]
+		if len(parts) >= 4 and parts[2] in {"resolve", "blob", "tree"}:
+			revision = parts[3]
+			parts = [parts[0], parts[1], *parts[4:]]
+	else:
+		parts = [p for p in path_or_ref.strip("/").split("/") if p]
+
+	if len(parts) < 2:
+		raise ValueError("Hugging Face references must include at least owner/repo.")
+
+	repo_id = f"{parts[0]}/{parts[1]}"
+	subpath = "/".join(parts[2:]) if len(parts) > 2 else None
+	return repo_id, subpath, revision
+
+
+def _resolve_model_reference(path_or_ref: str, *, expect_dir: bool, field_name: str) -> str:
+	local_path = Path(path_or_ref).expanduser()
+	if local_path.exists():
+		return str(local_path.resolve())
+
+	if _is_local_path(path_or_ref):
+		raise FileNotFoundError(f"{field_name} does not exist: {path_or_ref}")
+
+	try:
+		repo_id, subpath, revision = _parse_hf_reference(path_or_ref)
+	except ValueError as exc:
+		raise FileNotFoundError(
+			f"{field_name} does not exist: {path_or_ref}. Expected a local path or Hugging Face reference.",
+		) from exc
+
+	if expect_dir:
+		allow_patterns: list[str] | None = None
+		if subpath:
+			allow_patterns = [f"{subpath}/**", f"{subpath}/*"]
+		local_repo = Path(
+			snapshot_download(
+				repo_id=repo_id,
+				revision=revision,
+				allow_patterns=allow_patterns,
+			)
+		).resolve()
+		resolved_dir = (local_repo / subpath).resolve() if subpath else local_repo
+		if not resolved_dir.exists() or not resolved_dir.is_dir():
+			raise FileNotFoundError(
+				f"{field_name} resolved to a non-directory path: {resolved_dir}",
+			)
+		return str(resolved_dir)
+
+	if not subpath:
+		raise ValueError(
+			f"{field_name} must include a file path. Use owner/repo/path/to/file or a huggingface.co resolve URL.",
+		)
+
+	resolved_file = hf_hub_download(repo_id=repo_id, filename=subpath, revision=revision)
+	return str(Path(resolved_file).resolve())
+
+
+def resolve_config_paths(cfg: Config) -> Config:
+	resolved = {
+		"distilled_checkpoint_path": _resolve_model_reference(
+			cfg.distilled_checkpoint_path,
+			expect_dir=False,
+			field_name="distilled_checkpoint_path",
+		),
+		"spatial_upsampler_path": _resolve_model_reference(
+			cfg.spatial_upsampler_path,
+			expect_dir=False,
+			field_name="spatial_upsampler_path",
+		),
+		"gemma_root": _resolve_model_reference(
+			cfg.gemma_root,
+			expect_dir=True,
+			field_name="gemma_root",
+		),
+	}
+	return cfg.model_copy(update=resolved)
+
+
 def load_config(path: Path = CONFIG_PATH) -> Config:
 	if not path.exists():
 		raise FileNotFoundError(
@@ -63,7 +158,8 @@ def load_config(path: Path = CONFIG_PATH) -> Config:
 		)
 	with open(path) as f:
 		data = yaml.safe_load(f) or {}
-	return Config(**data)
+	cfg = Config(**data)
+	return resolve_config_paths(cfg)
 
 
 def validate_config(cfg: Config) -> None:
@@ -109,7 +205,6 @@ def save_frames_and_collect(video_chunks, frames_dir: str) -> torch.Tensor:
 @torch.inference_mode()
 def main() -> None:
 	cfg = load_config()
-	validate_config(cfg)
 
 	denoising_loop = euler_denoising_loop
 
